@@ -1,14 +1,8 @@
-<p align="center">
-  <img height="160" src="https://images.cnblogs.com/cnblogs_com/FreeSql/1656841/o_200424151316logo.png"/>
-</p>
-
-FreeSql 是功能强大的对象关系映射技术(O/RM)，支持 .NETCore 2.1+ 或 .NETFramework 4.0+ 或 Xamarin
-
-扶摇直上，至强ORM只为自由编码；鹏程万里，至简Linq可使保留黑发；横批：FreeSql（诗人：Coder）
+## 🦄 　FreeSql
 
 [![nuget](https://img.shields.io/nuget/v/FreeSql.svg?style=flat-square)](https://www.nuget.org/packages/FreeSql) [![stats](https://img.shields.io/nuget/dt/FreeSql.svg?style=flat-square)](https://www.nuget.org/stats/packages/FreeSql?groupby=Version) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/2881099/FreeSql/master/LICENSE.txt)
 
-## 🐮 Features
+FreeSql 是功能强大的对象关系映射技术(O/RM)，支持 .NETCore 2.1+ 或 .NETFramework 4.0+ 或 Xamarin。
 
 - [x] 支持 CodeFirst 迁移，哪怕使用 Access 数据库也支持；
 - [x] 支持 DbFirst 从数据库导入实体类，[安装实体类生成工具](https://github.com/2881099/FreeSql/wiki/DbFirst)；
@@ -16,9 +10,9 @@ FreeSql 是功能强大的对象关系映射技术(O/RM)，支持 .NETCore 2.1+ 
 - [x] 支持 丰富的表达式函数，以及灵活的自定义解析；
 - [x] 支持 导航属性一对多、多对多贪婪加载，以及延时加载；
 - [x] 支持 读写分离、分表分库、过滤器、乐观锁、悲观锁；
-- [x] 支持 MySql/SqlServer/PostgreSQL/Oracle/Sqlite/达梦/人大金仓/Access；
+- [x] 支持 MySql/SqlServer/PostgreSQL/Oracle/Sqlite/达梦/人大金仓/神舟通用/Access；
 
-## 📚 Documentation
+## 📚 　Documentation
 
 | | |
 | - | - |
@@ -34,17 +28,19 @@ FreeSql 是功能强大的对象关系映射技术(O/RM)，支持 .NETCore 2.1+ 
 - 要么[FreeSql.DbContext](https://github.com/2881099/FreeSql/wiki/DbContext)，有点像efcore的使用习惯；
 - 要么[FreeSql.BaseEntity](https://github.com/2881099/FreeSql/tree/master/Examples/base_entity)，求简单使用这个；
 
-> 学习项目
+> 示范项目
 
 - [zhontai.net Admin 后台管理系统](https://github.com/zhontai/Admin.Core)
-- [A simple and practical CMS implememted by .NET Core 2.2](https://github.com/luoyunchong/lin-cms-dotnetcore)
+- [A simple and practical CMS implememted by .NET Core](https://github.com/luoyunchong/lin-cms-dotnetcore)
+- [iusaas.com SaaS 企业应用管理系统](https://github.com/alonsoalon/TenantSite.Server)
+- [EasyCms 企业建站，事业单位使用的CMS管理系统](https://github.com/jasonyush/EasyCMS)
 - [内容管理系统](https://github.com/hejiyong/fscms)
 
 <p align="center">
-  <img src="https://images.cnblogs.com/cnblogs_com/kellynic/133561/o_200417052121functions08.png"/>
+  <img src="https://images.cnblogs.com/cnblogs_com/kellynic/133561/o_200610084147functions09.png"/>
 </p>
 
-## 🚀 Quick start
+## 🚀 　Quick start
 
 > dotnet add package FreeSql.Provider.Sqlite
 
@@ -83,7 +79,7 @@ class Tag {
 }
 ```
 
-## 🔎 Query
+## 🔎 　Query
 ```csharp
 //OneToOne、ManyToOne
 fsql.Select<Tag>().Where(a => a.Parent.Parent.Name == "粤语").ToList();
@@ -119,7 +115,7 @@ fsql.Select<Song>().OrderBy(a => Guid.NewGuid()).Limit(10).ToList();
 ```
 [More..](https://github.com/2881099/FreeSql/wiki/%e8%a1%a8%e8%be%be%e5%bc%8f%e5%87%bd%e6%95%b0) 
 
-## 🚁 Repository
+## 🚁 　Repository
 
 > dotnet add package FreeSql.Repository
 
@@ -142,7 +138,7 @@ public void Add() {
 
 参考：[在 asp.net core 中使用 TransactionalAttribute + UnitOfWorkManager 实现多种事务传播](https://github.com/dotnetcore/FreeSql/issues/289)
 
-## 💪 Performance
+## 💪 　Performance
 
 FreeSql Query & Dapper Query
 ```shell
@@ -170,7 +166,7 @@ Elapsed: 00:00:00.6495301; Query Entity Counts: 131072; ORM: Dapper
 
 [More..](https://github.com/2881099/FreeSql/wiki/%e6%80%a7%e8%83%bd)
 
-## 👯 Contributors
+## 👯 　Contributors
 
 [systemhejiyong](https://github.com/systemhejiyong)、
 [LambertW](https://github.com/LambertW)、
@@ -184,17 +180,18 @@ Elapsed: 00:00:00.6495301; Query Entity Counts: 131072; ORM: Dapper
 [LiaoLiaoWuJu](https://github.com/LiaoLiaoWuJu)、
 [hd2y](https://github.com/hd2y)、
 [tky753](https://github.com/tky753)、
-[feijie999](https://github.com/feijie999)
+[feijie999](https://github.com/feijie999)、
+constantine
 
-（QQ群：4336577）
+QQ群：4336577(已满)、8578575(在线)
 
-## 💕 Donation
+## 💕 　Donation
 
-L*y 58元、花花 88元、麦兜很乖 50元、网络来者 2000元、John 99.99元、alex 666元、bacongao 36元、无名 100元、Eternity 188元、无名 10元、⌒.Helper~..oO 66元、习惯与被习惯 100元、无名 100元、蔡易喋 88.88元、中讯科技 1000元、Good Good Work 24元、炽焰 6.6元、Nothing 100元
+L*y 58元、花花 88元、麦兜很乖 50元、网络来者 2000元、John 99.99元、alex 666元、bacongao 36元、无名 100元、Eternity 188元、无名 10元、⌒.Helper~..oO 66元、习惯与被习惯 100元、无名 100元、蔡易喋 88.88元、中讯科技 1000元、Good Good Work 24元、炽焰 6.6元、Nothing 100元、兰州天擎赵 500元、哈利路亚 300元、
+无名 100元
 
 > Thank you for your donation
 
-| | |
+| [Alipay](https://images.cnblogs.com/cnblogs_com/kellynic/133561/o_200417052520IMG_7936(20200123-155553).png) | [WeChat](https://images.cnblogs.com/cnblogs_com/kellynic/133561/o_200417052707IMG_7935(20200123-155553).png) |
 | - | - |
 | <img height="300" src="https://images.cnblogs.com/cnblogs_com/kellynic/133561/o_200417052520IMG_7936(20200123-155553).png"/> | <img height="300" src="https://images.cnblogs.com/cnblogs_com/kellynic/133561/o_200417052707IMG_7935(20200123-155553).png"/> |
-

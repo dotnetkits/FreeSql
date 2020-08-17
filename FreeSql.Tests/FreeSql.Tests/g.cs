@@ -11,6 +11,7 @@ public class g
     static Lazy<IFreeSql> mysqlLazy = new Lazy<IFreeSql>(() => new FreeSql.FreeSqlBuilder()
         .UseConnectionString(FreeSql.DataType.MySql, "Data Source=127.0.0.1;Port=3306;User ID=root;Password=root;Initial Catalog=cccddd;Charset=utf8;SslMode=none;Max pool size=5")
         //.UseConnectionFactory(FreeSql.DataType.MySql, () => new MySql.Data.MySqlClient.MySqlConnection("Data Source=127.0.0.1;Port=3306;User ID=root;Password=root;Initial Catalog=cccddd;Charset=utf8;SslMode=none;"))
+        //.UseConnectionString(FreeSql.DataType.MySql, "Data Source=192.168.164.10;Port=33061;User ID=root;Password=root;Initial Catalog=cccddd_mysqlconnector;Charset=utf8;SslMode=none;Max pool size=10")
         .UseAutoSyncStructure(true)
         //.UseGenerateCommandParameterWithLambda(true)
         .UseMonitorCommand(
@@ -41,6 +42,7 @@ public class g
 
     static Lazy<IFreeSql> sqlserverLazy = new Lazy<IFreeSql>(() => new FreeSql.FreeSqlBuilder()
         .UseConnectionString(FreeSql.DataType.SqlServer, "Data Source=.;Integrated Security=True;Initial Catalog=freesqlTest;Pooling=true;Max Pool Size=3")
+        //.UseConnectionFactory(FreeSql.DataType.SqlServer, () => new Microsoft.Data.SqlClient.SqlConnection("Data Source=.;Integrated Security=True;Initial Catalog=freesqlTest;Pooling=true;"))
         //.UseConnectionFactory(FreeSql.DataType.SqlServer, () => new System.Data.SqlClient.SqlConnection("Data Source=.;Integrated Security=True;Initial Catalog=freesqlTest;Pooling=true;"))
         //.UseConnectionString(FreeSql.DataType.SqlServer, "Data Source=192.168.164.129;uid=sa;pwd=123456;Initial Catalog=ds_shop;Pooling=true;Max Pool Size=3")
         //.UseConnectionFactory(FreeSql.DataType.SqlServer, () => new System.Data.SqlClient.SqlConnection("Data Source=192.168.164.129;uid=sa;pwd=123456;Initial Catalog=ds_shop;Pooling=true;"))
@@ -120,4 +122,30 @@ public class g
             (cmd, traceLog) => Console.WriteLine(traceLog))
         .Build());
     public static IFreeSql dameng => damengLazy.Value;
+
+    static Lazy<IFreeSql> shentongLazy = new Lazy<IFreeSql>(() =>
+    {
+        var connString = new System.Data.OscarClient.OscarConnectionStringBuilder {
+            Host = "192.168.164.10",
+            Port = 2003,
+            UserName = "SYSDBA",
+            Password = "szoscar55",
+            Database = "OSRDB",
+            Pooling = true,
+            MaxPoolSize = 2
+        };
+        return new FreeSql.FreeSqlBuilder()
+        .UseConnectionString(FreeSql.DataType.ShenTong, "HOST=192.168.164.10;PORT=2003;DATABASE=OSRDB;USERNAME=SYSDBA;PASSWORD=szoscar55;MAXPOOLSIZE=2")
+        //.UseConnectionFactory(FreeSql.DataType.ShenTong, () => new System.Data.OscarClient.OscarConnection("HOST=192.168.164.10;PORT=2003;DATABASE=OSRDB;USERNAME=SYSDBA;PASSWORD=szoscar55;MAXPOOLSIZE=2"))
+        .UseAutoSyncStructure(true)
+        //.UseGenerateCommandParameterWithLambda(true)
+        .UseNameConvert(FreeSql.Internal.NameConvertType.ToUpper)
+        .UseLazyLoading(true)
+        .UseMonitorCommand(
+            cmd => Trace.WriteLine("\r\n线程" + Thread.CurrentThread.ManagedThreadId + ": " + cmd.CommandText) //监听SQL命令对象，在执行前
+            //, (cmd, traceLog) => Console.WriteLine(traceLog)
+            )
+        .Build();
+    });
+    public static IFreeSql shentong => shentongLazy.Value;
 }

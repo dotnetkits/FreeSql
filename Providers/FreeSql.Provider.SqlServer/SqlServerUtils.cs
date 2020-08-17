@@ -4,7 +4,11 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+#if microsoft
+using Microsoft.Data.SqlClient;
+#else
 using System.Data.SqlClient;
+#endif
 using System.Globalization;
 using System.Text;
 
@@ -44,7 +48,7 @@ namespace FreeSql.SqlServer
         }
 
         public override DbParameter[] GetDbParamtersByObject(string sql, object obj) =>
-            Utils.GetDbParamtersByObject<SqlParameter>(sql, obj, "@", (name, type, value) =>
+            Utils.GetDbParamtersByObject<DbParameter>(sql, obj, "@", (name, type, value) =>
             {
                 if (value?.Equals(DateTime.MinValue) == true) value = new DateTime(1970, 1, 1);
                 var ret = new SqlParameter { ParameterName = $"@{name}", Value = value };
@@ -85,7 +89,8 @@ namespace FreeSql.SqlServer
             {
                 if (types[a] == typeof(string)) news[a] = objs[a];
                 else if (types[a].NullableTypeOrThis() == typeof(Guid)) news[a] = $"cast({objs[a]} as char(36))";
-                else news[a] = $"cast({objs[a]} as nvarchar)";
+                else if (types[a].IsNumberType()) news[a] = $"cast({objs[a]} as varchar)";
+                else news[a] = $"cast({objs[a]} as nvarchar(max))";
             }
             return string.Join(" + ", news);
         }
@@ -97,7 +102,7 @@ namespace FreeSql.SqlServer
         public override string QuoteWriteParamter(Type type, string paramterName) => paramterName;
         public override string QuoteReadColumn(Type type, Type mapType, string columnName) => columnName;
 
-        public override string GetNoneParamaterSqlValue(List<DbParameter> specialParams, Type type, object value)
+        public override string GetNoneParamaterSqlValue(List<DbParameter> specialParams, string specialParamFlag, Type type, object value)
         {
             if (value == null) return "NULL";
             if (type.IsNumberType()) return string.Format(CultureInfo.InvariantCulture, "{0}", value);

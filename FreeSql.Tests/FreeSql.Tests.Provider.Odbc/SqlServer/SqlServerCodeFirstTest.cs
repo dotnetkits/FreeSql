@@ -29,6 +29,40 @@ namespace FreeSql.Tests.Odbc.SqlServer
         }
 
         [Fact]
+        public void 表名中有点()
+        {
+            var item = new tbdot01 { name = "insert" };
+            g.sqlserver.Insert(item).ExecuteAffrows();
+
+            var find = g.sqlserver.Select<tbdot01>().Where(a => a.id == item.id).First();
+            Assert.NotNull(find);
+            Assert.Equal(item.id, find.id);
+            Assert.Equal("insert", find.name);
+
+            Assert.Equal(1, g.sqlserver.Update<tbdot01>().Set(a => a.name == "update").Where(a => a.id == item.id).ExecuteAffrows());
+            find = g.sqlserver.Select<tbdot01>().Where(a => a.id == item.id).First();
+            Assert.NotNull(find);
+            Assert.Equal(item.id, find.id);
+            Assert.Equal("update", find.name);
+
+            Assert.Equal(1, g.sqlserver.Delete<tbdot01>().Where(a => a.id == item.id).ExecuteAffrows());
+            find = g.sqlserver.Select<tbdot01>().Where(a => a.id == item.id).First();
+            Assert.Null(find);
+        }
+        /// <summary>
+        /// 表中带点
+        /// </summary>
+        [Table(Name = "[freesql.T].[dbo].[sys.tbdot01]")]
+        class tbdot01
+        {
+            /// <summary>
+            /// 主键
+            /// </summary>
+            public Guid id { get; set; }
+            public string name { get; set; }
+        }
+
+        [Fact]
         public void 中文表_字段()
         {
             var sql = g.sqlserver.CodeFirst.GetComparisonDDLStatements<测试中文表>();
@@ -84,6 +118,7 @@ namespace FreeSql.Tests.Odbc.SqlServer
         {
             var sql = g.sqlserver.CodeFirst.GetComparisonDDLStatements<AddUniquesInfo>();
             g.sqlserver.CodeFirst.SyncStructure<AddUniquesInfo>();
+            g.sqlserver.CodeFirst.SyncStructure(typeof(AddUniquesInfo), "AddUniquesInfo1");
         }
         [Table(Name = "AddUniquesInfo", OldName = "AddUniquesInfo2")]
         [Index("uk_phone", "phone", true)]
@@ -131,9 +166,8 @@ namespace FreeSql.Tests.Odbc.SqlServer
         [Fact]
         public void GetComparisonDDLStatements()
         {
-
             var sql = g.sqlserver.CodeFirst.GetComparisonDDLStatements<TableAllType>();
-
+            Assert.True(string.IsNullOrEmpty(sql)); //测试运行两次后
             sql = g.sqlserver.CodeFirst.GetComparisonDDLStatements<Tb_alltype>();
         }
 
@@ -179,6 +213,7 @@ namespace FreeSql.Tests.Odbc.SqlServer
                 testFieldShort = short.MaxValue,
                 testFieldShortNullable = short.MinValue,
                 testFieldString = "我是中国人string'\\?!@#$%^&*()_+{}}{~?><<>",
+                testFieldChar = 'X',
                 testFieldTimeSpan = TimeSpan.FromSeconds(999),
                 testFieldTimeSpanNullable = TimeSpan.FromSeconds(30),
                 testFieldUInt = uint.MaxValue,
@@ -199,12 +234,15 @@ namespace FreeSql.Tests.Odbc.SqlServer
             var item3 = insert.AppendData(item2).ExecuteInserted();
             var newitem2 = select.Where(a => a.Id == item3[0].Id).ToOne();
             Assert.Equal(item2.testFieldString, newitem2.testFieldString);
+            Assert.Equal(item2.testFieldChar, newitem2.testFieldChar);
 
             item3 = insert.NoneParameter().AppendData(item2).ExecuteInserted();
             newitem2 = select.Where(a => a.Id == item3[0].Id).ToOne();
             Assert.Equal(item2.testFieldString, newitem2.testFieldString);
+            Assert.Equal(item2.testFieldChar, newitem2.testFieldChar);
 
             var items = select.ToList();
+            var itemstb = select.ToDataTable();
         }
 
         [JsonObject(MemberSerialization.OptIn), Table(Name = "dbo.tb_alltype")]
@@ -331,6 +369,10 @@ namespace FreeSql.Tests.Odbc.SqlServer
             public string TestFieldString { get; set; }
 
 
+            [JsonProperty, Column(Name = "testFieldChar", DbType = "char(1)", IsNullable = true)]
+            public char testFieldChar { get; set; }
+
+
             [JsonProperty, Column(Name = "testFieldTimeSpan", DbType = "time")]
             public TimeSpan TestFieldTimeSpan { get; set; }
 
@@ -391,6 +433,7 @@ namespace FreeSql.Tests.Odbc.SqlServer
             public DateTimeOffset testFieldDateTimeOffset { get; set; }
             public byte[] testFieldBytes { get; set; }
             public string testFieldString { get; set; }
+            public char testFieldChar { get; set; }
             public Guid testFieldGuid { get; set; }
 
             public bool? testFieldBoolNullable { get; set; }

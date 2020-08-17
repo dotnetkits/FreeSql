@@ -22,6 +22,19 @@ namespace FreeSql.Internal.CommonProvider
             _tables.Add(new SelectTableInfo { Table = _commonUtils.GetTableByEntity(typeof(T3)), Alias = $"SP10c", On = null, Type = SelectTableInfoType.From });
         }
 
+        ISelect<T1, T2, T3> ISelect<T1, T2, T3>.WithSql(string sqlT1, string sqlT2, string sqlT3, object parms)
+        {
+            this.AsTable((type, old) =>
+            {
+                if (type == _tables[0].Table?.Type && string.IsNullOrEmpty(sqlT1) == false) return $"( {sqlT1} )";
+                if (type == _tables[1].Table?.Type && string.IsNullOrEmpty(sqlT2) == false) return $"( {sqlT2} )";
+                if (type == _tables[2].Table?.Type && string.IsNullOrEmpty(sqlT3) == false) return $"( {sqlT3} )";
+                return old;
+            });
+            if (parms != null) _params.AddRange(_commonUtils.GetDbParamtersByObject($"{sqlT1};\r\n{sqlT2};\r\n{sqlT3}", parms));
+            return this;
+        }
+
         double ISelect<T1, T2, T3>.Avg<TMember>(Expression<Func<T1, T2, T3, TMember>> column)
         {
             if (column == null) return default(double);
@@ -29,11 +42,11 @@ namespace FreeSql.Internal.CommonProvider
             return this.InternalAvg(column?.Body);
         }
 
-        ISelectGrouping<TKey, NaviteTuple<T1, T2, T3>> ISelect<T1, T2, T3>.GroupBy<TKey>(Expression<Func<T1, T2, T3, TKey>> exp)
+        ISelectGrouping<TKey, NativeTuple<T1, T2, T3>> ISelect<T1, T2, T3>.GroupBy<TKey>(Expression<Func<T1, T2, T3, TKey>> exp)
         {
-            if (exp == null) return this.InternalGroupBy<TKey, NaviteTuple<T1, T2, T3>>(exp?.Body);
+            if (exp == null) return this.InternalGroupBy<TKey, NativeTuple<T1, T2, T3>>(exp?.Body);
             for (var a = 0; a < exp.Parameters.Count; a++) _tables[a].Parameter = exp.Parameters[a];
-            return this.InternalGroupBy<TKey, NaviteTuple<T1, T2, T3>>(exp?.Body);
+            return this.InternalGroupBy<TKey, NativeTuple<T1, T2, T3>>(exp?.Body);
         }
 
         TMember ISelect<T1, T2, T3>.Max<TMember>(Expression<Func<T1, T2, T3, TMember>> column)
@@ -84,7 +97,6 @@ namespace FreeSql.Internal.CommonProvider
             for (var a = 0; a < select.Parameters.Count; a++) _tables[a].Parameter = select.Parameters[a];
             return this.InternalToList<TReturn>(select?.Body);
         }
-
         List<TDto> ISelect<T1, T2, T3>.ToList<TDto>() => (this as ISelect<T1, T2, T3>).ToList(GetToListDtoSelector<TDto>());
         Expression<Func<T1, T2, T3, TDto>> GetToListDtoSelector<TDto>()
         {
@@ -93,6 +105,12 @@ namespace FreeSql.Internal.CommonProvider
                 _tables[0].Parameter ?? Expression.Parameter(typeof(T1), "a"),
                 Expression.Parameter(typeof(T2), "b"),
                 Expression.Parameter(typeof(T3), "c"));
+        }
+        public void ToChunk<TReturn>(Expression<Func<T1, T2, T3, TReturn>> select, int size, Action<FetchCallbackArgs<List<TReturn>>> done)
+        {
+            if (select == null || done == null) return;
+            for (var a = 0; a < select.Parameters.Count; a++) _tables[a].Parameter = select.Parameters[a];
+            this.InternalToChunk<TReturn>(select.Body, size, done);
         }
 
         DataTable ISelect<T1, T2, T3>.ToDataTable<TReturn>(Expression<Func<T1, T2, T3, TReturn>> select)
@@ -151,9 +169,9 @@ namespace FreeSql.Internal.CommonProvider
             return this.Where(_commonExpression.ExpressionWhereLambda(_tables, exp?.Body, null, _whereCascadeExpression, _params)).Any();
         }
 
-        TReturn ISelect<T1, T2, T3>.ToOne<TReturn>(Expression<Func<T1, T2, T3, TReturn>> select) => (this as ISelect<T1, T2, T3>).ToList(select).FirstOrDefault();
-        TReturn ISelect<T1, T2, T3>.First<TReturn>(Expression<Func<T1, T2, T3, TReturn>> select) => (this as ISelect<T1, T2, T3>).ToList(select).FirstOrDefault();
-        TDto ISelect<T1, T2, T3>.First<TDto>() => (this as ISelect<T1, T2, T3>).ToList<TDto>().FirstOrDefault();
+        TReturn ISelect<T1, T2, T3>.ToOne<TReturn>(Expression<Func<T1, T2, T3, TReturn>> select) => (this as ISelect<T1, T2, T3>).Limit(1).ToList(select).FirstOrDefault();
+        TReturn ISelect<T1, T2, T3>.First<TReturn>(Expression<Func<T1, T2, T3, TReturn>> select) => (this as ISelect<T1, T2, T3>).Limit(1).ToList(select).FirstOrDefault();
+        TDto ISelect<T1, T2, T3>.First<TDto>() => (this as ISelect<T1, T2, T3>).Limit(1).ToList<TDto>().FirstOrDefault();
 
 #if net40
 #else
@@ -214,9 +232,9 @@ namespace FreeSql.Internal.CommonProvider
             return this.Where(_commonExpression.ExpressionWhereLambda(_tables, exp?.Body, null, _whereCascadeExpression, _params)).AnyAsync();
         }
 
-        async Task<TReturn> ISelect<T1, T2, T3>.ToOneAsync<TReturn>(Expression<Func<T1, T2, T3, TReturn>> select) => (await (this as ISelect<T1, T2, T3>).ToListAsync(select)).FirstOrDefault();
-        async Task<TReturn> ISelect<T1, T2, T3>.FirstAsync<TReturn>(Expression<Func<T1, T2, T3, TReturn>> select) => (await (this as ISelect<T1, T2, T3>).ToListAsync(select)).FirstOrDefault();
-        async Task<TDto> ISelect<T1, T2, T3>.FirstAsync<TDto>() => (await (this as ISelect<T1, T2, T3>).ToListAsync<TDto>()).FirstOrDefault();
+        async Task<TReturn> ISelect<T1, T2, T3>.ToOneAsync<TReturn>(Expression<Func<T1, T2, T3, TReturn>> select) => (await (this as ISelect<T1, T2, T3>).Limit(1).ToListAsync(select)).FirstOrDefault();
+        async Task<TReturn> ISelect<T1, T2, T3>.FirstAsync<TReturn>(Expression<Func<T1, T2, T3, TReturn>> select) => (await (this as ISelect<T1, T2, T3>).Limit(1).ToListAsync(select)).FirstOrDefault();
+        async Task<TDto> ISelect<T1, T2, T3>.FirstAsync<TDto>() => (await (this as ISelect<T1, T2, T3>).Limit(1).ToListAsync<TDto>()).FirstOrDefault();
 
 #endif
     }

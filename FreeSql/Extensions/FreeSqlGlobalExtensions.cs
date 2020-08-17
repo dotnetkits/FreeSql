@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.Data.Common;
 using System.Drawing;
 using System.Linq;
 using System.Linq.Expressions;
@@ -16,6 +17,7 @@ using System.Threading;
 
 public static partial class FreeSqlGlobalExtensions
 {
+    #region Type 对象扩展方法
     static Lazy<Dictionary<Type, bool>> _dicIsNumberType = new Lazy<Dictionary<Type, bool>>(() => new Dictionary<Type, bool>
     {
         [typeof(sbyte)] = true,
@@ -44,7 +46,7 @@ public static partial class FreeSqlGlobalExtensions
     public static bool IsIntegerType(this Type that) => that == null ? false : (_dicIsNumberType.Value.TryGetValue(that, out var tryval) ? tryval : false);
     public static bool IsNumberType(this Type that) => that == null ? false : _dicIsNumberType.Value.ContainsKey(that);
     public static bool IsNullableType(this Type that) => that.IsArray == false && that?.FullName.StartsWith("System.Nullable`1[") == true;
-    public static bool IsAnonymousType(this Type that) => that?.FullName.StartsWith("<>f__AnonymousType") == true;
+    public static bool IsAnonymousType(this Type that) => that == null ? false : (that.FullName.StartsWith("<>f__AnonymousType") || that.FullName.StartsWith("VB$AnonymousType"));
     public static bool IsArrayOrList(this Type that) => that == null ? false : (that.IsArray || typeof(IList).IsAssignableFrom(that));
     public static Type NullableTypeOrThis(this Type that) => that?.IsNullableType() == true ? that.GetGenericArguments().First() : that;
     internal static string NotNullAndConcat(this string that, params object[] args) => string.IsNullOrEmpty(that) ? null : string.Concat(new object[] { that }.Concat(args));
@@ -130,6 +132,7 @@ public static partial class FreeSqlGlobalExtensions
         if (that == typeof(string)) return default(string);
         if (that == typeof(Guid)) return default(Guid);
         if (that.IsArray) return Array.CreateInstance(that, 0);
+        if (that.IsInterface || that.IsAbstract) return null;
         var ctorParms = that.InternalGetTypeConstructor0OrFirst(false)?.GetParameters();
         if (ctorParms == null || ctorParms.Any() == false) return Activator.CreateInstance(that, true);
         return Activator.CreateInstance(that, ctorParms
@@ -165,6 +168,7 @@ public static partial class FreeSqlGlobalExtensions
         }
         return dict;
     });
+    #endregion
 
     /// <summary>
     /// 测量两个经纬度的距离，返回单位：米
@@ -181,6 +185,7 @@ public static partial class FreeSqlGlobalExtensions
         return 2 * Math.Asin(Math.Sqrt(Math.Pow(Math.Sin((radLat1 - radLat2) / 2), 2) + Math.Cos(radLat1) * Math.Cos(radLat2) * Math.Pow(Math.Sin((radLng1 - radLng2) / 2), 2))) * 6378137;
     }
 
+    #region Enum 对象扩展方法
     static ConcurrentDictionary<Type, FieldInfo[]> _dicGetFields = new ConcurrentDictionary<Type, FieldInfo[]>();
     public static object GetEnum<T>(this IDataReader dr, int index)
     {
@@ -193,7 +198,6 @@ public static partial class FreeSqlGlobalExtensions
         }
         return null;
     }
-
     public static string ToDescriptionOrString(this Enum item)
     {
         string name = item.ToString();
@@ -216,6 +220,7 @@ public static partial class FreeSqlGlobalExtensions
         }
         return ret;
     }
+    #endregion
 
     /// <summary>
     /// 将 IEnumable&lt;T&gt; 转成 ISelect&lt;T&gt;，以便使用 FreeSql 的查询功能。此方法用于 Lambda 表达式中，快速进行集合导航的查询。
@@ -305,9 +310,9 @@ public static partial class FreeSqlGlobalExtensions
         {
             var tb = orm.CodeFirst.GetTableByEntity(typeof(T1));
             if (tb == null || tb.Primarys.Any() == false)
-                (orm.CodeFirst as FreeSql.Internal.CommonProvider.CodeFirstProvider)._dicSycedTryAdd(typeof(T1)); //._dicSyced.TryAdd(typeof(TReturn), true);
+                (orm.CodeFirst as CodeFirstProvider)._dicSycedTryAdd(typeof(T1)); //._dicSyced.TryAdd(typeof(TReturn), true);
         }
-        var select = orm.Select<T1>().IncludeMany(navigateSelector, then) as FreeSql.Internal.CommonProvider.Select1Provider<T1>;
+        var select = orm.Select<T1>().IncludeMany(navigateSelector, then) as Select1Provider<T1>;
         select.SetList(list);
         return list;
     }
@@ -321,9 +326,9 @@ public static partial class FreeSqlGlobalExtensions
         {
             var tb = orm.CodeFirst.GetTableByEntity(typeof(T1));
             if (tb == null || tb.Primarys.Any() == false)
-                (orm.CodeFirst as FreeSql.Internal.CommonProvider.CodeFirstProvider)._dicSycedTryAdd(typeof(T1)); //._dicSyced.TryAdd(typeof(TReturn), true);
+                (orm.CodeFirst as CodeFirstProvider)._dicSycedTryAdd(typeof(T1)); //._dicSyced.TryAdd(typeof(TReturn), true);
         }
-        var select = orm.Select<T1>().IncludeMany(navigateSelector, then) as FreeSql.Internal.CommonProvider.Select1Provider<T1>;
+        var select = orm.Select<T1>().IncludeMany(navigateSelector, then) as Select1Provider<T1>;
         await select.SetListAsync(list);
         return list;
     }
@@ -383,5 +388,502 @@ public static partial class FreeSqlGlobalExtensions
         return list.Except(list.SelectMany(a => FreeSql.Extensions.EntityUtil.EntityUtilExtensions.GetEntityValueWithPropertyName(select._orm, tb.Type, a, navs[0].Property.Name) as IEnumerable<T1>)).ToList();
     }
 #endif
+    #endregion
+
+    #region AsTreeCte(..) 递归查询
+    /// <summary>
+    /// 使用递归 CTE 查询树型的所有子记录，或者所有父记录。<para></para>
+    /// 通过测试的数据库：MySql8.0、SqlServer、PostgreSQL、Oracle、Sqlite、达梦、人大金仓<para></para>
+    /// 返回隐藏字段：.ToList(a =&gt; new { item = a, level = "a.cte_level", path = "a.cte_path" })
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="that"></param>
+    /// <param name="up">false(默认)：由父级向子级的递归查询<para></para>true：由子级向父级的递归查询</param>
+    /// <param name="pathSelector">路径内容选择</param>
+    /// <param name="pathSeparator">连接路径内容</param>
+    /// <param name="level">递归层级</param>
+    /// <returns></returns>
+    public static ISelect<T1> AsTreeCte<T1>(this ISelect<T1> that,
+        Expression<Func<T1, string>> pathSelector = null,
+        bool up = false,
+        string pathSeparator = " -> ",
+        int level = -1) where T1 : class
+    {
+        var select = that as Select1Provider<T1>;
+        var tb = select._tables[0].Table;
+        var navs = tb.Properties.Select(a => tb.GetTableRef(a.Key, false))
+            .Where(a => a != null &&
+                a.RefType == FreeSql.Internal.Model.TableRefType.OneToMany &&
+                a.RefEntityType == tb.Type).ToArray();
+
+        if (navs.Length != 1) throw new ArgumentException($"{tb.Type.FullName} 不是父子关系，无法使用该功能");
+        var tbref = navs[0];
+
+        var cteName = "as_tree_cte";
+        if (select._orm.CodeFirst.IsSyncStructureToLower) cteName = cteName.ToLower();
+        if (select._orm.CodeFirst.IsSyncStructureToUpper) cteName = cteName.ToUpper();
+        var sql1ctePath = "";
+        if (pathSelector != null)
+        {
+            select._tables[0].Parameter = pathSelector?.Parameters[0];
+            switch (select._orm.Ado.DataType)
+            {
+                case DataType.PostgreSQL:
+                case DataType.OdbcPostgreSQL:
+                case DataType.OdbcKingbaseES:
+                case DataType.ShenTong: //神通测试未通过
+                case DataType.SqlServer:
+                case DataType.OdbcSqlServer:
+                    sql1ctePath = select._commonExpression.ExpressionWhereLambda(select._tables, Expression.Call(typeof(Convert).GetMethod("ToString", new Type[] { typeof(string) }), pathSelector?.Body), null, null, null);
+                    break;
+                default:
+                    sql1ctePath = select._commonExpression.ExpressionWhereLambda(select._tables, pathSelector?.Body, null, null, null);
+                    break;
+            }
+            sql1ctePath = $"{sql1ctePath} as cte_path, ";
+        }
+        var sql1 = select.ToSql($"0 as cte_level, {sql1ctePath}{select.GetAllFieldExpressionTreeLevel2().Field}").Trim();
+
+        select._where.Clear();
+        select.As("wct2");
+        var sql2Field = select.GetAllFieldExpressionTreeLevel2().Field;
+        var sql2InnerJoinOn = up == false ?
+            string.Join(" and ", tbref.Columns.Select((a, z) => $"wct2.{select._commonUtils.QuoteSqlName(tbref.RefColumns[z].Attribute.Name)} = wct1.{select._commonUtils.QuoteSqlName(a.Attribute.Name)}")) :
+            string.Join(" and ", tbref.Columns.Select((a, z) => $"wct2.{select._commonUtils.QuoteSqlName(a.Attribute.Name)} = wct1.{select._commonUtils.QuoteSqlName(tbref.RefColumns[z].Attribute.Name)}"));
+        
+        var sql2ctePath = "";
+        if (pathSelector != null)
+        {
+            select._tables[0].Parameter = pathSelector?.Parameters[0];
+            var wct2ctePath = select._commonExpression.ExpressionWhereLambda(select._tables, pathSelector?.Body, null, null, null);
+            sql2ctePath = select._commonUtils.StringConcat(
+                new string[] {
+                    up == false ? "wct1.cte_path" : wct2ctePath,
+                    select._commonUtils.FormatSql("{0}", pathSeparator),
+                    up == false ? wct2ctePath : "wct1.cte_path"
+                }, new Type[] {
+                    typeof(string),
+                    typeof(string),
+                    typeof(string)
+                });
+            sql2ctePath = $"{sql2ctePath} as cte_path, ";
+        }
+        var sql2 = select
+            .AsAlias((type, old) => type == tb.Type ? old.Replace("wct2", "wct1") : old)
+            .AsTable((type, old) => type == tb.Type ? cteName : old)
+            .InnerJoin($"{select._commonUtils.QuoteSqlName(tb.DbName)} wct2 ON {sql2InnerJoinOn}")
+            .ToSql($"wct1.cte_level + 1 as cte_level, {sql2ctePath}{sql2Field}").Trim();
+
+        var newSelect = select._orm.Select<T1>()
+            .AsType(tb.Type)
+            .AsTable((type, old) => type == tb.Type ? cteName : old)
+            .WhereIf(level > 0, $"a.cte_level < {level + 1}")
+            .OrderBy(up, "a.cte_level desc") as Select1Provider<T1>;
+
+        var nsselsb = new StringBuilder();
+        if (AdoProvider.IsFromSlave(select._select) == false) nsselsb.Append(" "); //读写分离规则，如果强制读主库，则在前面加个空格
+        nsselsb.Append("WITH ");
+        switch (select._orm.Ado.DataType)
+        {
+            case DataType.PostgreSQL:
+            case DataType.OdbcPostgreSQL:
+            case DataType.OdbcKingbaseES:
+            case DataType.ShenTong: //神通测试未通过
+            case DataType.MySql:
+            case DataType.OdbcMySql:
+                nsselsb.Append("RECURSIVE ");
+                break;
+        }
+        nsselsb.Append(select._commonUtils.QuoteSqlName(cteName));
+        switch (select._orm.Ado.DataType)
+        {
+            case DataType.Oracle: //[Err] ORA-32039: recursive WITH clause must have column alias list
+            case DataType.OdbcOracle:
+            case DataType.Dameng: //递归 WITH 子句必须具有列别名列表
+            case DataType.OdbcDameng:
+                nsselsb.Append($"(cte_level, {(pathSelector == null ? "" : "cte_path, ")}{sql2Field.Replace("wct2.", "")})");
+                break;
+        }
+        nsselsb.Append(@"
+as
+(
+").Append(sql1).Append("\r\n\r\nunion all\r\n\r\n").Append(sql2).Append(@"
+)
+SELECT ");
+        newSelect._select = nsselsb.ToString();
+        nsselsb.Clear();
+        return newSelect;
+    }
+    #endregion
+
+    #region Ado.net 扩展方法，类似于 Dapper
+
+    static Dictionary<Type, IFreeSql> _dicCurd = new Dictionary<Type, IFreeSql>();
+    static object _dicCurdLock = new object();
+    static IFreeSql GetCrud(IDbConnection dbconn)
+    {
+        if (dbconn == null) throw new ArgumentNullException($"{nameof(dbconn)} 不能为 null"); ;
+        Type dbconType = dbconn.GetType();
+        var connType = dbconType.UnderlyingSystemType;
+        if (_dicCurd.TryGetValue(connType, out var fsql)) return fsql;
+
+        Type providerType = null;
+        switch (connType.Name)
+        {
+            case "MySqlConnection":
+                providerType = Type.GetType("FreeSql.MySql.MySqlProvider`1,FreeSql.Provider.MySql")?.MakeGenericType(connType);
+                if (providerType == null) providerType = Type.GetType("FreeSql.MySql.MySqlProvider`1,FreeSql.Provider.MySqlConnector")?.MakeGenericType(connType);
+                if (providerType == null) throw new Exception("缺少 FreeSql 数据库实现包：FreeSql.Provider.MySql.dll，可前往 nuget 下载");
+                break;
+            case "SqlConnection":
+                providerType = Type.GetType("FreeSql.SqlServer.SqlServerProvider`1,FreeSql.Provider.SqlServer")?.MakeGenericType(connType);
+                if (providerType == null) throw new Exception("缺少 FreeSql 数据库实现包：FreeSql.Provider.SqlServer.dll，可前往 nuget 下载");
+                break;
+            case "NpgsqlConnection":
+                providerType = Type.GetType("FreeSql.PostgreSQL.PostgreSQLProvider`1,FreeSql.Provider.PostgreSQL")?.MakeGenericType(connType);
+                if (providerType == null) throw new Exception("缺少 FreeSql 数据库实现包：FreeSql.Provider.PostgreSQL.dll，可前往 nuget 下载");
+                break;
+            case "OracleConnection":
+                providerType = Type.GetType("FreeSql.Oracle.OracleProvider`1,FreeSql.Provider.Oracle")?.MakeGenericType(connType);
+                if (providerType == null) throw new Exception("缺少 FreeSql 数据库实现包：FreeSql.Provider.Oracle.dll，可前往 nuget 下载");
+                break;
+            case "SQLiteConnection":
+                providerType = Type.GetType("FreeSql.Sqlite.SqliteProvider`1,FreeSql.Provider.Sqlite")?.MakeGenericType(connType);
+                if (providerType == null) throw new Exception("缺少 FreeSql 数据库实现包：FreeSql.Provider.Sqlite.dll，可前往 nuget 下载");
+                break;
+            case "DmConnection":
+                providerType = Type.GetType("FreeSql.Dameng.DamengProvider`1,FreeSql.Provider.Dameng")?.MakeGenericType(connType);
+                if (providerType == null) throw new Exception("缺少 FreeSql 数据库实现包：FreeSql.Provider.Dameng.dll，可前往 nuget 下载");
+                break;
+            case "OscarConnection":
+                providerType = Type.GetType("FreeSql.ShenTong.ShenTongProvider`1,FreeSql.Provider.ShenTong")?.MakeGenericType(connType);
+                if (providerType == null) throw new Exception("缺少 FreeSql 数据库实现包：FreeSql.Provider.ShenTong.dll，可前往 nuget 下载");
+                break;
+            default:
+                throw new Exception("未实现");
+        }
+        lock (_dicCurdLock)
+        {
+            if (_dicCurd.TryGetValue(connType, out fsql)) return fsql;
+            lock (_dicCurdLock)
+                _dicCurd.Add(connType, fsql = Activator.CreateInstance(providerType, new object[] { null, null, null }) as IFreeSql);
+        }
+        return fsql;
+    }
+    static IFreeSql GetCrud(IDbTransaction dbtran)
+    {
+        if (dbtran == null) throw new ArgumentNullException($"{nameof(dbtran)} 不能为 null");
+        return GetCrud(dbtran.Connection);
+    }
+
+    /// <summary>
+    /// 获取 IDbConnection 对应的 IFreeSql 实例
+    /// </summary>
+    /// <param name="that"></param>
+    /// <returns></returns>
+    public static IFreeSql GetIFreeSql(this IDbConnection that) => GetCrud(that);
+
+    #region IDbConnection
+    /// <summary>
+    /// 插入数据
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <returns></returns>
+    public static IInsert<T1> Insert<T1>(this IDbConnection that) where T1 : class => GetCrud(that).Insert<T1>().WithConnection(that as DbConnection);
+    /// <summary>
+    /// 插入数据，传入实体
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="source"></param>
+    /// <returns></returns>
+    public static IInsert<T1> Insert<T1>(this IDbConnection that, T1 source) where T1 : class => GetCrud(that).Insert<T1>(source).WithConnection(that as DbConnection);
+    /// <summary>
+    /// 插入数据，传入实体数组
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="source"></param>
+    /// <returns></returns>
+    public static IInsert<T1> Insert<T1>(this IDbConnection that, T1[] source) where T1 : class => GetCrud(that).Insert<T1>(source).WithConnection(that as DbConnection);
+    /// <summary>
+    /// 插入数据，传入实体集合
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="source"></param>
+    /// <returns></returns>
+    public static IInsert<T1> Insert<T1>(this IDbConnection that, List<T1> source) where T1 : class => GetCrud(that).Insert<T1>(source).WithConnection(that as DbConnection);
+    /// <summary>
+    /// 插入数据，传入实体集合
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="source"></param>
+    /// <returns></returns>
+    public static IInsert<T1> Insert<T1>(this IDbConnection that, IEnumerable<T1> source) where T1 : class => GetCrud(that).Insert<T1>(source).WithConnection(that as DbConnection);
+
+    /// <summary>
+    /// 插入或更新数据，此功能依赖数据库特性（低版本可能不支持），参考如下：<para></para>
+    /// MySql 5.6+: on duplicate key update<para></para>
+    /// PostgreSQL 9.4+: on conflict do update<para></para>
+    /// SqlServer 2008+: merge into<para></para>
+    /// Oracle 11+: merge into<para></para>
+    /// Sqlite: replace into<para></para>
+    /// 达梦: merge into<para></para>
+    /// 人大金仓：on conflict do update<para></para>
+    /// 神通：merge into<para></para>
+    /// MsAccess：不支持<para></para>
+    /// 注意区别：FreeSql.Repository 仓储也有 InsertOrUpdate 方法（不依赖数据库特性）
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <returns></returns>
+    public static IInsertOrUpdate<T1> InsertOrUpdate<T1>(this IDbConnection that) where T1 : class => GetCrud(that).InsertOrUpdate<T1>().WithConnection(that as DbConnection);
+
+    /// <summary>
+    /// 修改数据
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <returns></returns>
+    public static IUpdate<T1> Update<T1>(this IDbConnection that) where T1 : class => GetCrud(that).Update<T1>().WithConnection(that as DbConnection);
+    /// <summary>
+    /// 修改数据，传入动态条件，如：主键值 | new[]{主键值1,主键值2} | TEntity1 | new[]{TEntity1,TEntity2} | new{id=1}
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="dywhere">主键值、主键值集合、实体、实体集合、匿名对象、匿名对象集合</param>
+    /// <returns></returns>
+    public static IUpdate<T1> Update<T1>(this IDbConnection that, object dywhere) where T1 : class => GetCrud(that).Update<T1>(dywhere).WithConnection(that as DbConnection);
+
+    /// <summary>
+    /// 查询数据
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <returns></returns>
+    public static ISelect<T1> Select<T1>(this IDbConnection that) where T1 : class => GetCrud(that).Select<T1>().WithConnection(that as DbConnection);
+    /// <summary>
+    /// 查询数据，传入动态条件，如：主键值 | new[]{主键值1,主键值2} | TEntity1 | new[]{TEntity1,TEntity2} | new{id=1}
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="dywhere">主键值、主键值集合、实体、实体集合、匿名对象、匿名对象集合</param>
+    /// <returns></returns>
+    public static ISelect<T1> Select<T1>(this IDbConnection that, object dywhere) where T1 : class => GetCrud(that).Select<T1>(dywhere).WithConnection(that as DbConnection);
+
+    /// <summary>
+    /// 删除数据
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <returns></returns>
+    public static IDelete<T1> Delete<T1>(this IDbConnection that) where T1 : class => GetCrud(that).Delete<T1>().WithConnection(that as DbConnection);
+    /// <summary>
+    /// 删除数据，传入动态条件，如：主键值 | new[]{主键值1,主键值2} | TEntity1 | new[]{TEntity1,TEntity2} | new{id=1}
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="dywhere">主键值、主键值集合、实体、实体集合、匿名对象、匿名对象集合</param>
+    /// <returns></returns>
+    public static IDelete<T1> Delete<T1>(this IDbConnection that, object dywhere) where T1 : class => GetCrud(that).Delete<T1>(dywhere).WithConnection(that as DbConnection);
+
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2> Select<T1, T2>(this IDbConnection that) where T1 : class where T2 : class =>
+        GetCrud(that).Select<T1>().From<T2>((s, b) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3> Select<T1, T2, T3>(this IDbConnection that) where T1 : class where T2 : class where T3 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3>((s, b, c) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4> Select<T1, T2, T3, T4>(this IDbConnection that) where T1 : class where T2 : class where T3 : class where T4 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4>((s, b, c, d) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5> Select<T1, T2, T3, T4, T5>(this IDbConnection that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5>((s, b, c, d, e) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5, T6> Select<T1, T2, T3, T4, T5, T6>(this IDbConnection that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where T6 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5, T6>((s, b, c, d, e, f) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5, T6, T7> Select<T1, T2, T3, T4, T5, T6, T7>(this IDbConnection that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where T6 : class where T7 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5, T6, T7>((s, b, c, d, e, f, g) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5, T6, T7, T8> Select<T1, T2, T3, T4, T5, T6, T7, T8>(this IDbConnection that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where T6 : class where T7 : class where T8 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5, T6, T7, T8>((s, b, c, d, e, f, g, h) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5, T6, T7, T8, T9> Select<T1, T2, T3, T4, T5, T6, T7, T8, T9>(this IDbConnection that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where T6 : class where T7 : class where T8 : class where T9 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5, T6, T7, T8, T9>((s, b, c, d, e, f, g, h, i) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> Select<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>(this IDbConnection that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where T6 : class where T7 : class where T8 : class where T9 : class where T10 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5, T6, T7, T8, T9, T10>((s, b, c, d, e, f, g, h, i, j) => s);
+    #endregion
+
+    #region IDbTransaction
+    /// <summary>
+    /// 插入数据
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <returns></returns>
+    public static IInsert<T1> Insert<T1>(this IDbTransaction that) where T1 : class => GetCrud(that).Insert<T1>().WithTransaction(that as DbTransaction);
+    /// <summary>
+    /// 插入数据，传入实体
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="source"></param>
+    /// <returns></returns>
+    public static IInsert<T1> Insert<T1>(this IDbTransaction that, T1 source) where T1 : class => GetCrud(that).Insert<T1>(source).WithTransaction(that as DbTransaction);
+    /// <summary>
+    /// 插入数据，传入实体数组
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="source"></param>
+    /// <returns></returns>
+    public static IInsert<T1> Insert<T1>(this IDbTransaction that, T1[] source) where T1 : class => GetCrud(that).Insert<T1>(source).WithTransaction(that as DbTransaction);
+    /// <summary>
+    /// 插入数据，传入实体集合
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="source"></param>
+    /// <returns></returns>
+    public static IInsert<T1> Insert<T1>(this IDbTransaction that, List<T1> source) where T1 : class => GetCrud(that).Insert<T1>(source).WithTransaction(that as DbTransaction);
+    /// <summary>
+    /// 插入数据，传入实体集合
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="source"></param>
+    /// <returns></returns>
+    public static IInsert<T1> Insert<T1>(this IDbTransaction that, IEnumerable<T1> source) where T1 : class => GetCrud(that).Insert<T1>(source).WithTransaction(that as DbTransaction);
+
+    /// <summary>
+    /// 插入或更新数据，此功能依赖数据库特性（低版本可能不支持），参考如下：<para></para>
+    /// MySql 5.6+: on duplicate key update<para></para>
+    /// PostgreSQL 9.4+: on conflict do update<para></para>
+    /// SqlServer 2008+: merge into<para></para>
+    /// Oracle 11+: merge into<para></para>
+    /// Sqlite: replace into<para></para>
+    /// 达梦: merge into<para></para>
+    /// 人大金仓：on conflict do update<para></para>
+    /// 神通：merge into<para></para>
+    /// MsAccess：不支持<para></para>
+    /// 注意区别：FreeSql.Repository 仓储也有 InsertOrUpdate 方法（不依赖数据库特性）
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <returns></returns>
+    public static IInsertOrUpdate<T1> InsertOrUpdate<T1>(this IDbTransaction that) where T1 : class => GetCrud(that).InsertOrUpdate<T1>().WithTransaction(that as DbTransaction);
+
+    /// <summary>
+    /// 修改数据
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <returns></returns>
+    public static IUpdate<T1> Update<T1>(this IDbTransaction that) where T1 : class => GetCrud(that).Update<T1>().WithTransaction(that as DbTransaction);
+    /// <summary>
+    /// 修改数据，传入动态条件，如：主键值 | new[]{主键值1,主键值2} | TEntity1 | new[]{TEntity1,TEntity2} | new{id=1}
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="dywhere">主键值、主键值集合、实体、实体集合、匿名对象、匿名对象集合</param>
+    /// <returns></returns>
+    public static IUpdate<T1> Update<T1>(this IDbTransaction that, object dywhere) where T1 : class => GetCrud(that).Update<T1>(dywhere).WithTransaction(that as DbTransaction);
+
+    /// <summary>
+    /// 查询数据
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <returns></returns>
+    public static ISelect<T1> Select<T1>(this IDbTransaction that) where T1 : class => GetCrud(that).Select<T1>().WithTransaction(that as DbTransaction);
+    /// <summary>
+    /// 查询数据，传入动态条件，如：主键值 | new[]{主键值1,主键值2} | TEntity1 | new[]{TEntity1,TEntity2} | new{id=1}
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="dywhere">主键值、主键值集合、实体、实体集合、匿名对象、匿名对象集合</param>
+    /// <returns></returns>
+    public static ISelect<T1> Select<T1>(this IDbTransaction that, object dywhere) where T1 : class => GetCrud(that).Select<T1>(dywhere).WithTransaction(that as DbTransaction);
+
+    /// <summary>
+    /// 删除数据
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <returns></returns>
+    public static IDelete<T1> Delete<T1>(this IDbTransaction that) where T1 : class => GetCrud(that).Delete<T1>().WithTransaction(that as DbTransaction);
+    /// <summary>
+    /// 删除数据，传入动态条件，如：主键值 | new[]{主键值1,主键值2} | TEntity1 | new[]{TEntity1,TEntity2} | new{id=1}
+    /// </summary>
+    /// <typeparam name="T1"></typeparam>
+    /// <param name="dywhere">主键值、主键值集合、实体、实体集合、匿名对象、匿名对象集合</param>
+    /// <returns></returns>
+    public static IDelete<T1> Delete<T1>(this IDbTransaction that, object dywhere) where T1 : class => GetCrud(that).Delete<T1>(dywhere).WithTransaction(that as DbTransaction);
+    
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2> Select<T1, T2>(this IDbTransaction that) where T1 : class where T2 : class =>
+        GetCrud(that).Select<T1>().From<T2>((s, b) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3> Select<T1, T2, T3>(this IDbTransaction that) where T1 : class where T2 : class where T3 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3>((s, b, c) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4> Select<T1, T2, T3, T4>(this IDbTransaction that) where T1 : class where T2 : class where T3 : class where T4 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4>((s, b, c, d) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5> Select<T1, T2, T3, T4, T5>(this IDbTransaction that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5>((s, b, c, d, e) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5, T6> Select<T1, T2, T3, T4, T5, T6>(this IDbTransaction that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where T6 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5, T6>((s, b, c, d, e, f) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5, T6, T7> Select<T1, T2, T3, T4, T5, T6, T7>(this IDbTransaction that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where T6 : class where T7 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5, T6, T7>((s, b, c, d, e, f, g) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5, T6, T7, T8> Select<T1, T2, T3, T4, T5, T6, T7, T8>(this IDbTransaction that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where T6 : class where T7 : class where T8 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5, T6, T7, T8>((s, b, c, d, e, f, g, h) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5, T6, T7, T8, T9> Select<T1, T2, T3, T4, T5, T6, T7, T8, T9>(this IDbTransaction that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where T6 : class where T7 : class where T8 : class where T9 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5, T6, T7, T8, T9>((s, b, c, d, e, f, g, h, i) => s);
+    /// <summary>
+    /// 多表查询
+    /// </summary>
+    /// <returns></returns>
+    public static ISelect<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> Select<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>(this IDbTransaction that) where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where T6 : class where T7 : class where T8 : class where T9 : class where T10 : class =>
+        GetCrud(that).Select<T1>().From<T2, T3, T4, T5, T6, T7, T8, T9, T10>((s, b, c, d, e, f, g, h, i, j) => s);
+    #endregion
+
     #endregion
 }

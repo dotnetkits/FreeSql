@@ -18,7 +18,7 @@ namespace FreeSql.Odbc.KingbaseES
         {
         }
 
-        internal string InternalTableAlias;
+        internal string InternalTableAlias { get; set; }
         internal StringBuilder InternalSbSet => _set;
         internal StringBuilder InternalSbSetIncr => _setIncr;
         internal Dictionary<string, bool> InternalIgnore => _ignore;
@@ -52,8 +52,8 @@ namespace FreeSql.Odbc.KingbaseES
             Exception exception = null;
             try
             {
-                ret = _orm.Ado.Query<T1>(_connection, _transaction, CommandType.Text, sql, dbParms);
-                ValidateVersionAndThrow(ret.Count);
+                ret = _orm.Ado.Query<T1>(_table.TypeLazy ?? _table.Type, _connection, _transaction, CommandType.Text, sql, dbParms);
+                ValidateVersionAndThrow(ret.Count, sql, dbParms);
             }
             catch (Exception ex)
             {
@@ -83,7 +83,7 @@ namespace FreeSql.Odbc.KingbaseES
             {
                 if (pkidx > 0) caseWhen.Append(" || '+' || ");
                 if (string.IsNullOrEmpty(InternalTableAlias) == false) caseWhen.Append(InternalTableAlias).Append(".");
-                caseWhen.Append(_commonUtils.QuoteReadColumn(pk.CsType, pk.Attribute.MapType, _commonUtils.QuoteSqlName(pk.Attribute.Name))).Append("::varchar");
+                caseWhen.Append(_commonUtils.QuoteReadColumn(pk.CsType, pk.Attribute.MapType, _commonUtils.QuoteSqlName(pk.Attribute.Name))).Append("::text");
                 ++pkidx;
             }
             caseWhen.Append(")");
@@ -101,7 +101,7 @@ namespace FreeSql.Odbc.KingbaseES
             foreach (var pk in _table.Primarys)
             {
                 if (pkidx > 0) sb.Append(" || '+' || ");
-                sb.Append(_commonUtils.FormatSql("{0}", pk.GetMapValue(d))).Append("::varchar");
+                sb.Append(_commonUtils.FormatSql("{0}", pk.GetMapValue(d))).Append("::text");
                 ++pkidx;
             }
             sb.Append(")");
@@ -110,6 +110,11 @@ namespace FreeSql.Odbc.KingbaseES
         protected override void ToSqlCaseWhenEnd(StringBuilder sb, ColumnInfo col)
         {
             if (_noneParameter == false) return;
+            if (col.Attribute.MapType == typeof(string))
+            {
+                sb.Append("::text");
+                return;
+            }
             var dbtype = _commonUtils.CodeFirst.GetDbInfo(col.Attribute.MapType)?.dbtype;
             if (dbtype == null) return;
 
@@ -144,8 +149,8 @@ namespace FreeSql.Odbc.KingbaseES
             Exception exception = null;
             try
             {
-                ret = await _orm.Ado.QueryAsync<T1>(_connection, _transaction, CommandType.Text, sql, dbParms);
-                ValidateVersionAndThrow(ret.Count);
+                ret = await _orm.Ado.QueryAsync<T1>(_table.TypeLazy ?? _table.Type, _connection, _transaction, CommandType.Text, sql, dbParms);
+                ValidateVersionAndThrow(ret.Count, sql, dbParms);
             }
             catch (Exception ex)
             {

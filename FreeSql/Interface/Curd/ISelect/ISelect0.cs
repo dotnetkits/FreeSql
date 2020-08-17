@@ -79,7 +79,7 @@ namespace FreeSql
         /// <param name="size">数据块的大小</param>
         /// <param name="done">处理数据块</param>
         /// <param name="includeNestedMembers">false: 返回 2级 LeftJoin/InnerJoin/RightJoin 对象；true: 返回所有 LeftJoin/InnerJoin/RightJoin 的导航数据</param>
-        void ToChunk(int size, Action<List<T1>> done, bool includeNestedMembers = false);
+        void ToChunk(int size, Action<FetchCallbackArgs<List<T1>>> done, bool includeNestedMembers = false);
         /// <summary>
         /// 执行SQL查询，返回 field 指定字段的记录，并以元组或基础类型(int,string,long)接收，记录不存在时返回 Count 为 0 的列表
         /// </summary>
@@ -218,21 +218,24 @@ namespace FreeSql
         TSelect RightJoin<T2>(Expression<Func<T1, T2, bool>> exp);
 
         /// <summary>
-        /// 左联查询，使用原生sql语法，LeftJoin("type b on b.id = a.id and b.clicks > ?clicks", new { clicks = 1 })
+        /// 左联查询，使用原生sql语法，LeftJoin("type b on b.id = a.id and b.clicks > ?clicks", new { clicks = 1 })<para></para>
+        /// 提示：parms 参数还可以传 Dictionary&lt;string, object&gt;
         /// </summary>
         /// <param name="sql">sql语法条件</param>
         /// <param name="parms">参数</param>
         /// <returns></returns>
         TSelect LeftJoin(string sql, object parms = null);
         /// <summary>
-        /// 联接查询，使用原生sql语法，InnerJoin("type b on b.id = a.id and b.clicks > ?clicks", new { clicks = 1 })
+        /// 联接查询，使用原生sql语法，InnerJoin("type b on b.id = a.id and b.clicks > ?clicks", new { clicks = 1 })<para></para>
+        /// 提示：parms 参数还可以传 Dictionary&lt;string, object&gt;
         /// </summary>
         /// <param name="sql">sql语法条件</param>
         /// <param name="parms">参数</param>
         /// <returns></returns>
         TSelect InnerJoin(string sql, object parms = null);
         /// <summary>
-        /// 右联查询，使用原生sql语法，RightJoin("type b on b.id = a.id and b.clicks > ?clicks", new { clicks = 1 })
+        /// 右联查询，使用原生sql语法，RightJoin("type b on b.id = a.id and b.clicks > ?clicks", new { clicks = 1 })<para></para>
+        /// 提示：parms 参数还可以传 Dictionary&lt;string, object&gt;
         /// </summary>
         /// <param name="sql">sql语法条件</param>
         /// <param name="parms">参数</param>
@@ -247,14 +250,16 @@ namespace FreeSql
         TSelect RawJoin(string sql);
 
         /// <summary>
-        /// 原生sql语法条件，Where("id = ?id", new { id = 1 })
+        /// 原生sql语法条件，Where("id = ?id", new { id = 1 })<para></para>
+        /// 提示：parms 参数还可以传 Dictionary&lt;string, object&gt;
         /// </summary>
         /// <param name="sql">sql语法条件</param>
         /// <param name="parms">参数</param>
         /// <returns></returns>
         TSelect Where(string sql, object parms = null);
         /// <summary>
-        /// 原生sql语法条件，WhereIf(true, "id = ?id", new { id = 1 })
+        /// 原生sql语法条件，WhereIf(true, "id = ?id", new { id = 1 })<para></para>
+        /// 提示：parms 参数还可以传 Dictionary&lt;string, object&gt;
         /// </summary>
         /// <param name="condition">true 时生效</param>
         /// <param name="sql">sql语法条件</param>
@@ -285,21 +290,24 @@ namespace FreeSql
         /// Oracle: for update nowait<para></para>
         /// Sqlite: 无效果<para></para>
         /// 达梦: for update nowait<para></para>
-        /// 人大金仓: for update nowait
+        /// 人大金仓: for update nowait<para></para>
+        /// 神通: for update
         /// </summary>
         /// <param name="nowait">noawait</param>
         /// <returns></returns>
         TSelect ForUpdate(bool nowait = false);
 
         /// <summary>
-        /// 按原生sql语法分组，GroupBy("concat(name, ?cc)", new { cc = 1 })
+        /// 按原生sql语法分组，GroupBy("concat(name, ?cc)", new { cc = 1 })<para></para>
+        /// 提示：parms 参数还可以传 Dictionary&lt;string, object&gt;
         /// </summary>
         /// <param name="sql">sql语法</param>
         /// <param name="parms">参数</param>
         /// <returns></returns>
         TSelect GroupBy(string sql, object parms = null);
         /// <summary>
-        /// 按原生sql语法聚合条件过滤，Having("count(name) = ?cc", new { cc = 1 })
+        /// 按原生sql语法聚合条件过滤，Having("count(name) = ?cc", new { cc = 1 })<para></para>
+        /// 提示：parms 参数还可以传 Dictionary&lt;string, object&gt;
         /// </summary>
         /// <param name="sql">sql语法条件</param>
         /// <param name="parms">参数</param>
@@ -307,14 +315,16 @@ namespace FreeSql
         TSelect Having(string sql, object parms = null);
 
         /// <summary>
-        /// 按原生sql语法排序，OrderBy("count(name) + ?cc desc", new { cc = 1 })
+        /// 按原生sql语法排序，OrderBy("count(name) + ?cc desc", new { cc = 1 })<para></para>
+        /// 提示：parms 参数还可以传 Dictionary&lt;string, object&gt;
         /// </summary>
         /// <param name="sql">sql语法</param>
         /// <param name="parms">参数</param>
         /// <returns></returns>
         TSelect OrderBy(string sql, object parms = null);
         /// <summary>
-        /// 按原生sql语法排序，OrderBy(true, "count(name) + ?cc desc", new { cc = 1 })
+        /// 按原生sql语法排序，OrderBy(true, "count(name) + ?cc desc", new { cc = 1 })<para></para>
+        /// 提示：parms 参数还可以传 Dictionary&lt;string, object&gt;
         /// </summary>
         /// <param name="condition">true 时生效</param>
         /// <param name="sql">sql语法</param>

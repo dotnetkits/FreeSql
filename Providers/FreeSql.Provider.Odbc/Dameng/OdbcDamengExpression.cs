@@ -77,7 +77,7 @@ namespace FreeSql.Odbc.Dameng
                         case "NewGuid":
                             return null;
                         case "Next":
-                            if (callExp.Object?.Type == typeof(Random)) return "cast(dbms_random.value*1000000000 as smallint)";
+                            if (callExp.Object?.Type == typeof(Random)) return "cast(dbms_random.value*1000000000 as number)";
                             return null;
                         case "NextDouble":
                             if (callExp.Object?.Type == typeof(Random)) return "dbms_random.value";
@@ -100,6 +100,16 @@ namespace FreeSql.Odbc.Dameng
                         objExp = callExp.Arguments.FirstOrDefault();
                         objType = objExp?.Type;
                         argIndex++;
+
+                        if (objType == typeof(string))
+                        {
+                            switch (callExp.Method.Name)
+                            {
+                                case "First":
+                                case "FirstOrDefault":
+                                    return $"substr({getExp(callExp.Arguments[0])}, 1, 1)";
+                            }
+                        }
                     }
                     if (objType == null) objType = callExp.Method.DeclaringType;
                     if (objType != null || objType.IsArrayOrList())
@@ -222,7 +232,7 @@ namespace FreeSql.Odbc.Dameng
             {
                 case "Days": return $"extract(day from {left})";
                 case "Hours": return $"extract(hour from {left})";
-                case "Milliseconds": return $"cast(substr(extract(second from {left})-floor(extract(second from {left})),2,3) as number)";
+                case "Milliseconds": return $"cast(substr(extract(second from {left})-floor(extract(second from {left})),3,3) as number)";
                 case "Minutes": return $"extract(minute from {left})";
                 case "Seconds": return $"floor(extract(second from {left}))";
                 case "Ticks": return $"(extract(day from {left})*86400+extract(hour from {left})*3600+extract(minute from {left})*60+extract(second from {left}))*10000000";
@@ -250,6 +260,28 @@ namespace FreeSql.Odbc.Dameng
                         return $"({arg2} is null or {arg2} = '' or ltrim({arg2}) = '')";
                     case "Concat":
                         return _common.StringConcat(exp.Arguments.Select(a => getExp(a)).ToArray(), null);
+                    case "Format":
+                        if (exp.Arguments[0].NodeType != ExpressionType.Constant) throw new Exception($"未实现函数表达式 {exp} 解析，参数 {exp.Arguments[0]} 必须为常量");
+                        var expArgsHack = exp.Arguments.Count == 2 && exp.Arguments[1].NodeType == ExpressionType.NewArrayInit ?
+                            (exp.Arguments[1] as NewArrayExpression).Expressions : exp.Arguments.Where((a, z) => z > 0);
+                        //3个 {} 时，Arguments 解析出来是分开的
+                        //4个 {} 时，Arguments[1] 只能解析这个出来，然后里面是 NewArray []
+                        var expArgs = expArgsHack.Select(a => $"'||{_common.IsNull(ExpressionLambdaToSql(a, tsc), "''")}||'").ToArray();
+                        return string.Format(ExpressionLambdaToSql(exp.Arguments[0], tsc), expArgs);
+                    case "Join":
+                        if (exp.IsStringJoin(out var tolistObjectExp, out var toListMethod, out var toListArgs1))
+                        {
+                            var newToListArgs0 = Expression.Call(tolistObjectExp, toListMethod,
+                                Expression.Lambda(
+                                    Expression.Call(
+                                        typeof(SqlExtExtensions).GetMethod("StringJoinOracleGroupConcat"),
+                                        Expression.Convert(toListArgs1.Body, typeof(object)),
+                                        Expression.Convert(exp.Arguments[0], typeof(object))),
+                                    toListArgs1.Parameters));
+                            var newToListSql = getExp(newToListArgs0);
+                            return newToListSql;
+                        }
+                        break;
                 }
             }
             else

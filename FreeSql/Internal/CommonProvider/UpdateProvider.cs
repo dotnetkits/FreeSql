@@ -32,8 +32,10 @@ namespace FreeSql.Internal.CommonProvider
         public bool _noneParameter;
         public int _batchRowsLimit, _batchParameterLimit;
         public bool _batchAutoTransaction = true;
+        public Action<BatchProgressStatus<T1>> _batchProgress;
         public DbTransaction _transaction;
         public DbConnection _connection;
+        public Action<StringBuilder> _interceptSql;
 
         public UpdateProvider(IFreeSql orm, CommonUtils commonUtils, CommonExpression commonExpression, object dywhere)
         {
@@ -101,12 +103,18 @@ namespace FreeSql.Internal.CommonProvider
             return this;
         }
 
-        protected void ValidateVersionAndThrow(int affrows)
+        public IUpdate<T1> BatchProgress(Action<BatchProgressStatus<T1>> callback)
+        {
+            _batchProgress = callback;
+            return this;
+        }
+
+        protected void ValidateVersionAndThrow(int affrows, string sql, DbParameter[] dbParms)
         {
             if (_table.VersionColumn != null && _source.Count > 0)
             {
                 if (affrows != _source.Count)
-                    throw new Exception($"记录可能不存在，或者【行级乐观锁】版本过旧，更新数量{_source.Count}，影响的行数{affrows}。");
+                    throw new DbUpdateVersionException($"记录可能不存在，或者【行级乐观锁】版本过旧，更新数量{_source.Count}，影响的行数{affrows}。", _table, sql, dbParms, affrows, _source.Select(a => (object)a));
                 foreach (var d in _source)
                     _orm.SetEntityIncrByWithPropertyName(_table.Type, d, _table.VersionColumn.CsName, 1);
             }
@@ -126,6 +134,7 @@ namespace FreeSql.Internal.CommonProvider
             if (_noneParameter == false)
             {
                 var colSum = _table.Columns.Count - _ignore.Count;
+                if (colSum <= 0) colSum = 1;
                 takeMax = parameterLimit / colSum;
                 if (takeMax > valuesLimit) takeMax = valuesLimit;
             }
@@ -143,6 +152,7 @@ namespace FreeSql.Internal.CommonProvider
             var ret = 0;
             if (ss.Length <= 1)
             {
+                if (_source?.Any() == true) _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, 1, 1));
                 ret = this.RawExecuteAffrows();
                 ClearData();
                 return ret;
@@ -160,6 +170,7 @@ namespace FreeSql.Internal.CommonProvider
                     for (var a = 0; a < ss.Length; a++)
                     {
                         _source = ss[a];
+                        _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, a + 1, ss.Length));
                         ret += this.RawExecuteAffrows();
                     }
                 }
@@ -175,6 +186,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < ss.Length; a++)
                             {
                                 _source = ss[a];
+                                _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, a + 1, ss.Length));
                                 ret += this.RawExecuteAffrows();
                             }
                             _transaction.Commit();
@@ -210,6 +222,7 @@ namespace FreeSql.Internal.CommonProvider
             var ret = new List<T1>();
             if (ss.Length <= 1)
             {
+                if (_source?.Any() == true) _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, 1, 1));
                 ret = this.RawExecuteUpdated();
                 ClearData();
                 return ret;
@@ -227,6 +240,7 @@ namespace FreeSql.Internal.CommonProvider
                     for (var a = 0; a < ss.Length; a++)
                     {
                         _source = ss[a];
+                        _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, a + 1, ss.Length));
                         ret.AddRange(this.RawExecuteUpdated());
                     }
                 }
@@ -242,6 +256,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < ss.Length; a++)
                             {
                                 _source = ss[a];
+                                _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, a + 1, ss.Length));
                                 ret.AddRange(this.RawExecuteUpdated());
                             }
                             _transaction.Commit();
@@ -284,7 +299,7 @@ namespace FreeSql.Internal.CommonProvider
             try
             {
                 affrows = _orm.Ado.ExecuteNonQuery(_connection, _transaction, CommandType.Text, sql, dbParms);
-                ValidateVersionAndThrow(affrows);
+                ValidateVersionAndThrow(affrows, sql, dbParms);
             }
             catch (Exception ex)
             {
@@ -394,7 +409,7 @@ namespace FreeSql.Internal.CommonProvider
             _set.Append(", ").Append(_commonUtils.QuoteSqlName(col.Attribute.Name)).Append(" = ");
             if (_noneParameter)
             {
-                _set.Append(_commonUtils.GetNoneParamaterSqlValue(_params, col.Attribute.MapType, paramVal));
+                _set.Append(_commonUtils.GetNoneParamaterSqlValue(_params, "u", col.Attribute.MapType, paramVal));
             }
             else
             {
@@ -550,7 +565,7 @@ namespace FreeSql.Internal.CommonProvider
                 var sb = new StringBuilder();
 
                 sb.Append(_commonUtils.QuoteSqlName(col.Attribute.Name)).Append(" = ");
-                sb.Append(thenValue(_commonUtils.GetNoneParamaterSqlValue(_paramsSource, col.Attribute.MapType, col.GetMapValue(_source.First()))));
+                sb.Append(thenValue(_commonUtils.GetNoneParamaterSqlValue(_paramsSource, "u", col.Attribute.MapType, col.GetMapValue(_source.First()))));
 
                 return sb.ToString();
 
@@ -574,7 +589,7 @@ namespace FreeSql.Internal.CommonProvider
                     ToSqlWhen(cwsb, _table.Primarys, d);
                     cwsb.Append(" THEN ");
                     var val = col.GetMapValue(d);
-                    cwsb.Append(thenValue(_commonUtils.GetNoneParamaterSqlValue(_paramsSource, col.Attribute.MapType, val)));
+                    cwsb.Append(thenValue(_commonUtils.GetNoneParamaterSqlValue(_paramsSource, "u", col.Attribute.MapType, val)));
                     if (val == null || val == DBNull.Value) nulls++;
                 }
                 cwsb.Append(" END");
@@ -635,6 +650,7 @@ namespace FreeSql.Internal.CommonProvider
                 var colidx = 0;
                 foreach (var col in _table.Columns.Values)
                 {
+                    if (col.Attribute.IsPrimary) continue;
                     if (col.Attribute.IsIdentity == false && col.Attribute.IsVersion == false && _ignore.ContainsKey(col.Attribute.Name) == false)
                     {
                         if (colidx > 0) sb.Append(", ");
@@ -646,7 +662,7 @@ namespace FreeSql.Internal.CommonProvider
                         {
                             var val = col.GetMapValue(_source.First());
                             if (_noneParameter)
-                                sb.Append(_commonUtils.GetNoneParamaterSqlValue(_paramsSource, col.Attribute.MapType, val));
+                                sb.Append(_commonUtils.GetNoneParamaterSqlValue(_paramsSource, "u", col.Attribute.MapType, val));
                             else
                             {
                                 sb.Append(_commonUtils.QuoteWriteParamter(col.Attribute.MapType, _commonUtils.QuoteParamterName($"p_{_paramsSource.Count}")));
@@ -672,6 +688,7 @@ namespace FreeSql.Internal.CommonProvider
                 var colidx = 0;
                 foreach (var col in _table.Columns.Values)
                 {
+                    if (col.Attribute.IsPrimary) continue;
                     if (col.Attribute.IsIdentity == false && col.Attribute.IsVersion == false && _ignore.ContainsKey(col.Attribute.Name) == false)
                     {
                         if (colidx > 0) sb.Append(", ");
@@ -690,7 +707,7 @@ namespace FreeSql.Internal.CommonProvider
                                 cwsb.Append(" THEN ");
                                 var val = col.GetMapValue(d);
                                 if (_noneParameter)
-                                    cwsb.Append(_commonUtils.GetNoneParamaterSqlValue(_paramsSource, col.Attribute.MapType, val));
+                                    cwsb.Append(_commonUtils.GetNoneParamaterSqlValue(_paramsSource, "u", col.Attribute.MapType, val));
                                 else
                                 {
                                     cwsb.Append(_commonUtils.QuoteWriteParamter(col.Attribute.MapType, _commonUtils.QuoteParamterName($"p_{_paramsSource.Count}")));
@@ -733,7 +750,10 @@ namespace FreeSql.Internal.CommonProvider
 
             sb.Append(" \r\nWHERE ");
             if (_source.Any())
+            {
+                if (_table.Primarys.Any() == false) throw new ArgumentException($"{_table.Type.DisplayCsharp()} 没有定义主键，无法使用 SetSource，请尝试 SetDto");
                 sb.Append("(").Append(_commonUtils.WhereItems(_table, "", _source)).Append(")");
+            }
 
             if (_where.Length > 0)
                 sb.Append(_source.Any() ? _where.ToString() : _where.ToString().Substring(5));
@@ -752,6 +772,7 @@ namespace FreeSql.Internal.CommonProvider
                     sb.Append(" AND ").Append(versionCondi);
             }
 
+            _interceptSql?.Invoke(sb);
             return sb.ToString();
         }
     }

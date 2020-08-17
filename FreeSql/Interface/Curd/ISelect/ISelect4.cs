@@ -32,6 +32,7 @@ namespace FreeSql
         DataTable ToDataTable<TReturn>(Expression<Func<T1, T2, T3, T4, TReturn>> select);
         List<TReturn> ToList<TReturn>(Expression<Func<T1, T2, T3, T4, TReturn>> select);
         List<TDto> ToList<TDto>();
+        void ToChunk<TReturn>(Expression<Func<T1, T2, T3, T4, TReturn>> select, int size, Action<FetchCallbackArgs<List<TReturn>>> done);
 
         TReturn ToOne<TReturn>(Expression<Func<T1, T2, T3, T4, TReturn>> select);
         TReturn First<TReturn>(Expression<Func<T1, T2, T3, T4, TReturn>> select);
@@ -51,9 +52,11 @@ namespace FreeSql
         ISelect<T1, T2, T3, T4> Where(Expression<Func<T1, T2, T3, T4, bool>> exp);
         ISelect<T1, T2, T3, T4> WhereIf(bool condition, Expression<Func<T1, T2, T3, T4, bool>> exp);
 
-        ISelectGrouping<TKey, NaviteTuple<T1, T2, T3, T4>> GroupBy<TKey>(Expression<Func<T1, T2, T3, T4, TKey>> exp);
+        ISelectGrouping<TKey, NativeTuple<T1, T2, T3, T4>> GroupBy<TKey>(Expression<Func<T1, T2, T3, T4, TKey>> exp);
 
         ISelect<T1, T2, T3, T4> OrderBy<TMember>(Expression<Func<T1, T2, T3, T4, TMember>> column);
         ISelect<T1, T2, T3, T4> OrderByDescending<TMember>(Expression<Func<T1, T2, T3, T4, TMember>> column);
+
+        ISelect<T1, T2, T3, T4> WithSql(string sqlT1, string sqlT2, string sqlT3, string sqlT4, object parms = null);
     }
 }

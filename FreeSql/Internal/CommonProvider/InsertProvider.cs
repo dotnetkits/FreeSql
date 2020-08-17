@@ -23,9 +23,11 @@ namespace FreeSql.Internal.CommonProvider
         public Dictionary<string, bool> _auditValueChangedDict = new Dictionary<string, bool>(StringComparer.CurrentCultureIgnoreCase);
         public TableInfo _table;
         public Func<string, string> _tableRule;
+        public string _noneParameterFlag = "c";
         public bool _noneParameter, _insertIdentity;
         public int _batchValuesLimit, _batchParameterLimit;
         public bool _batchAutoTransaction = true;
+        public Action<BatchProgressStatus<T1>> _batchProgress;
         public DbParameter[] _params;
         public DbTransaction _transaction;
         public DbConnection _connection;
@@ -55,6 +57,7 @@ namespace FreeSql.Internal.CommonProvider
         {
             _batchValuesLimit = _batchParameterLimit = 0;
             _batchAutoTransaction = true;
+            _batchProgress = null;
             _insertIdentity = false;
             _source.Clear();
             _ignore.Clear();
@@ -93,6 +96,12 @@ namespace FreeSql.Internal.CommonProvider
             _batchValuesLimit = valuesLimit;
             _batchParameterLimit = parameterLimit;
             _batchAutoTransaction = autoTransaction;
+            return this;
+        }
+
+        public IInsert<T1> BatchProgress(Action<BatchProgressStatus<T1>> callback)
+        {
+            _batchProgress = callback;
             return this;
         }
 
@@ -181,6 +190,7 @@ namespace FreeSql.Internal.CommonProvider
             if (_noneParameter == false)
             {
                 var colSum = _table.Columns.Count - _ignore.Count;
+                if (colSum <= 0) colSum = 1;
                 takeMax = parameterLimit / colSum;
                 if (takeMax > valuesLimit) takeMax = valuesLimit;
             }
@@ -203,6 +213,7 @@ namespace FreeSql.Internal.CommonProvider
             }
             if (ss.Length == 1)
             {
+                _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, 1, 1));
                 ret = this.RawExecuteAffrows();
                 ClearData();
                 return ret;
@@ -220,6 +231,7 @@ namespace FreeSql.Internal.CommonProvider
                     for (var a = 0; a < ss.Length; a++)
                     {
                         _source = ss[a];
+                        _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, a + 1, ss.Length));
                         ret += this.RawExecuteAffrows();
                     }
                 }
@@ -235,6 +247,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < ss.Length; a++)
                             {
                                 _source = ss[a];
+                                _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, a + 1, ss.Length));
                                 ret += this.RawExecuteAffrows();
                             }
                             _transaction.Commit();
@@ -275,6 +288,7 @@ namespace FreeSql.Internal.CommonProvider
             }
             if (ss.Length == 1)
             {
+                _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, 1, 1));
                 ret = this.RawExecuteIdentity();
                 ClearData();
                 return ret;
@@ -292,6 +306,7 @@ namespace FreeSql.Internal.CommonProvider
                     for (var a = 0; a < ss.Length; a++)
                     {
                         _source = ss[a];
+                        _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, a + 1, ss.Length));
                         if (a < ss.Length - 1) this.RawExecuteAffrows();
                         else ret = this.RawExecuteIdentity();
                     }
@@ -308,6 +323,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < ss.Length; a++)
                             {
                                 _source = ss[a];
+                                _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, a + 1, ss.Length));
                                 if (a < ss.Length - 1) this.RawExecuteAffrows();
                                 else ret = this.RawExecuteIdentity();
                             }
@@ -349,6 +365,7 @@ namespace FreeSql.Internal.CommonProvider
             }
             if (ss.Length == 1)
             {
+                _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, 1, 1));
                 ret = this.RawExecuteInserted();
                 ClearData();
                 return ret;
@@ -366,6 +383,7 @@ namespace FreeSql.Internal.CommonProvider
                     for (var a = 0; a < ss.Length; a++)
                     {
                         _source = ss[a];
+                        _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, a + 1, ss.Length));
                         ret.AddRange(this.RawExecuteInserted());
                     }
                 }
@@ -381,6 +399,7 @@ namespace FreeSql.Internal.CommonProvider
                             for (var a = 0; a < ss.Length; a++)
                             {
                                 _source = ss[a];
+                                _batchProgress?.Invoke(new BatchProgressStatus<T1>(_source, a + 1, ss.Length));
                                 ret.AddRange(this.RawExecuteInserted());
                             }
                             _transaction.Commit();
@@ -493,7 +512,8 @@ namespace FreeSql.Internal.CommonProvider
 
         public virtual string ToSql() => ToSqlValuesOrSelectUnionAll(true);
 
-        public string ToSqlValuesOrSelectUnionAll(bool isValues = true)
+        public string ToSqlValuesOrSelectUnionAll(bool isValues = true) => ToSqlValuesOrSelectUnionAllExtension101(isValues, null);
+        public string ToSqlValuesOrSelectUnionAllExtension101(bool isValues, Action<object, int, StringBuilder> onrow)
         {
             if (_source == null || _source.Any() == false) return null;
             var sb = new StringBuilder();
@@ -529,8 +549,9 @@ namespace FreeSql.Internal.CommonProvider
                     else
                     {
                         object val = col.GetMapValue(d);
+                        if (val == null && col.Attribute.IsNullable == false) val = col.CsType == typeof(string) ? "" : Utils.GetDataReaderValue(col.CsType.NullableTypeOrThis(), null);//#384
                         if (_noneParameter)
-                            sb.Append(_commonUtils.GetNoneParamaterSqlValue(specialParams, col.Attribute.MapType, val));
+                            sb.Append(_commonUtils.GetNoneParamaterSqlValue(specialParams, _noneParameterFlag, col.Attribute.MapType, val));
                         else
                         {
                             sb.Append(_commonUtils.QuoteWriteParamter(col.Attribute.MapType, _commonUtils.QuoteParamterName($"{col.CsName}_{didx}")));
@@ -540,10 +561,10 @@ namespace FreeSql.Internal.CommonProvider
                     ++colidx2;
                 }
                 if (isValues) sb.Append(")");
+                onrow?.Invoke(d, didx, sb);
                 ++didx;
             }
-            if (_noneParameter && specialParams.Any())
-                _params = specialParams.ToArray();
+            if (_noneParameter && specialParams.Any()) _params = specialParams.ToArray();
             return sb.ToString();
         }
 
@@ -551,13 +572,13 @@ namespace FreeSql.Internal.CommonProvider
         {
             var dt = new DataTable();
             dt.TableName = TableRuleInvoke();
-            var dtCols = new List<NaviteTuple<ColumnInfo, Type, bool>>();
+            var dtCols = new List<NativeTuple<ColumnInfo, Type, bool>>();
             foreach (var col in _table.ColumnsByPosition)
             {
                 if (col.Attribute.IsIdentity && _insertIdentity == false) continue;
                 if (col.Attribute.IsIdentity == false && _ignore.ContainsKey(col.Attribute.Name)) continue;
                 dt.Columns.Add(col.Attribute.Name, col.Attribute.MapType.NullableTypeOrThis());
-                dtCols.Add(NaviteTuple.Create(col, col.Attribute.MapType.NullableTypeOrThis(), col.Attribute.MapType.IsNullableType()));
+                dtCols.Add(NativeTuple.Create(col, col.Attribute.MapType.NullableTypeOrThis(), col.Attribute.MapType.IsNullableType()));
             }
             if (dt.Columns.Count == 0) return dt;
             var didx = 0;

@@ -41,6 +41,8 @@ namespace FreeSql
                     case DataType.OdbcSqlServer:
                     case DataType.PostgreSQL:
                     case DataType.OdbcPostgreSQL:
+                    case DataType.OdbcKingbaseES:
+                    case DataType.ShenTong:
                         if (_tableIdentitys.Length == 1 && _table.Primarys.Length == 1)
                         {
                             await DbContextFlushCommandAsync();
@@ -102,6 +104,8 @@ namespace FreeSql
                     case DataType.OdbcSqlServer:
                     case DataType.PostgreSQL:
                     case DataType.OdbcPostgreSQL:
+                    case DataType.OdbcKingbaseES:
+                    case DataType.ShenTong:
                         await DbContextFlushCommandAsync();
                         var rets = await this.OrmInsert(data).ExecuteInsertedAsync();
                         if (rets.Count != data.Count()) throw new Exception($"特别错误：批量添加失败，{_db.OrmOriginal.Ado.DataType} 的返回数据，与添加的数目不匹配");
@@ -359,15 +363,16 @@ namespace FreeSql
 
             if (data?.Count > 0)
             {
-
                 if (cuig.Length == _table.Columns.Count)
                     return ups.Length == data.Count ? -998 : -997;
 
-                var updateSource = data.Select(a => a.Value).ToArray();
-                var update = this.OrmUpdate(null).SetSource(updateSource).IgnoreColumns(cuig);
-
+                var update = this.OrmUpdate(null).SetSource(data.Select(a => a.Value)).IgnoreColumns(cuig);
                 var affrows = await update.ExecuteAffrowsAsync();
-                _db._entityChangeReport.AddRange(updateSource.Select(a => new DbContext.EntityChangeReport.ChangeInfo { Object = a, Type = DbContext.EntityChangeType.Update }));
+                _db._entityChangeReport.AddRange(data.Select(a => new DbContext.EntityChangeReport.ChangeInfo { 
+                    Object = a.Value, 
+                    BeforeObject = _states.TryGetValue(a.Key, out var beforeVal) ? beforeVal.Value : null, 
+                    Type = DbContext.EntityChangeType.Update 
+                }));
 
                 foreach (var newval in data)
                 {
@@ -420,7 +425,7 @@ namespace FreeSql
             if (dels.Any() == false) return 0;
             var affrows = await this.OrmDelete(dels.Select(a => a.Value)).ExecuteAffrowsAsync();
             _db._entityChangeReport.AddRange(dels.Select(a => new DbContext.EntityChangeReport.ChangeInfo { Object = a.Value, Type = DbContext.EntityChangeType.Delete }));
-            return Math.Max(dels.Length, affrows);
+            return affrows;
         }
         /// <summary>
         /// 根据 lambda 条件删除数据

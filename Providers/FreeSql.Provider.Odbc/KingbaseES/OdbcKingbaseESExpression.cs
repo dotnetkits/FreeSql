@@ -37,7 +37,7 @@ namespace FreeSql.Odbc.KingbaseES
                             case "System.Int64": return $"({getExp(operandExp)})::int8";
                             case "System.SByte": return $"({getExp(operandExp)})::int2";
                             case "System.Single": return $"({getExp(operandExp)})::float4";
-                            case "System.String": return $"({getExp(operandExp)})::varchar";
+                            case "System.String": return $"({getExp(operandExp)})::text";
                             case "System.UInt16": return $"({getExp(operandExp)})::int2";
                             case "System.UInt32": return $"({getExp(operandExp)})::int4";
                             case "System.UInt64": return $"({getExp(operandExp)})::int8";
@@ -87,7 +87,7 @@ namespace FreeSql.Odbc.KingbaseES
                             if (callExp.Method.DeclaringType.IsNumberType()) return "random()";
                             return null;
                         case "ToString":
-                            if (callExp.Object != null) return callExp.Arguments.Count == 0 ? $"({getExp(callExp.Object)})::varchar" : null;
+                            if (callExp.Object != null) return callExp.Arguments.Count == 0 ? $"({getExp(callExp.Object)})::text" : null;
                             return null;
                     }
 
@@ -101,6 +101,16 @@ namespace FreeSql.Odbc.KingbaseES
                         objExp = callExp.Arguments.FirstOrDefault();
                         objType = objExp?.Type;
                         argIndex++;
+
+                        if (objType == typeof(string))
+                        {
+                            switch (callExp.Method.Name)
+                            {
+                                case "First":
+                                case "FirstOrDefault":
+                                    return $"substr({getExp(callExp.Arguments[0])}, 1, 1)";
+                            }
+                        }
                     }
                     if (objType == null) objType = callExp.Method.DeclaringType;
                     if (objType != null || objType.IsArrayOrList())
@@ -314,6 +324,33 @@ namespace FreeSql.Odbc.KingbaseES
                         return $"({arg2} is null or {arg2} = '' or ltrim({arg2}) = '')";
                     case "Concat":
                         return _common.StringConcat(exp.Arguments.Select(a => getExp(a)).ToArray(), null);
+                    case "Format":
+                        if (exp.Arguments[0].NodeType != ExpressionType.Constant) throw new Exception($"未实现函数表达式 {exp} 解析，参数 {exp.Arguments[0]} 必须为常量");
+                        var expArgsHack = exp.Arguments.Count == 2 && exp.Arguments[1].NodeType == ExpressionType.NewArrayInit ?
+                            (exp.Arguments[1] as NewArrayExpression).Expressions : exp.Arguments.Where((a, z) => z > 0);
+                        //3个 {} 时，Arguments 解析出来是分开的
+                        //4个 {} 时，Arguments[1] 只能解析这个出来，然后里面是 NewArray []
+                        var expArgs = expArgsHack.Select(a =>
+                        {
+                            var atype = (a as UnaryExpression)?.Operand.Type.NullableTypeOrThis() ?? a.Type.NullableTypeOrThis();
+                            if (atype == typeof(string)) return $"'||{_common.IsNull(ExpressionLambdaToSql(a, tsc), "''")}||'";
+                            return $"'||{_common.IsNull($"({ExpressionLambdaToSql(a, tsc)})::text", "''")}||'";
+                        }).ToArray();
+                        return string.Format(ExpressionLambdaToSql(exp.Arguments[0], tsc), expArgs);
+                    case "Join":
+                        if (exp.IsStringJoin(out var tolistObjectExp, out var toListMethod, out var toListArgs1))
+                        {
+                            var newToListArgs0 = Expression.Call(tolistObjectExp, toListMethod,
+                                Expression.Lambda(
+                                    Expression.Call(
+                                        typeof(SqlExtExtensions).GetMethod("StringJoinPgsqlGroupConcat"),
+                                        Expression.Convert(toListArgs1.Body, typeof(object)),
+                                        Expression.Convert(exp.Arguments[0], typeof(object))),
+                                    toListArgs1.Parameters));
+                            var newToListSql = getExp(newToListArgs0);
+                            return newToListSql;
+                        }
+                        break;
                 }
             }
             else
@@ -330,12 +367,12 @@ namespace FreeSql.Odbc.KingbaseES
                         if (exp.Arguments.Count > 1)
                         {
                             if (exp.Arguments[1].Type == typeof(bool) ||
-                                exp.Arguments[1].Type == typeof(StringComparison) && getExp(exp.Arguments[0]).Contains("IgnoreCase")) likeOpt = "ILIKE";
+                                exp.Arguments[1].Type == typeof(StringComparison)) likeOpt = "ILIKE";
                         }
-                        if (exp.Method.Name == "StartsWith") return $"({left}) {likeOpt} {(args0Value.EndsWith("'") ? args0Value.Insert(args0Value.Length - 1, "%") : $"(({args0Value})::varchar || '%')")}";
-                        if (exp.Method.Name == "EndsWith") return $"({left}) {likeOpt} {(args0Value.StartsWith("'") ? args0Value.Insert(1, "%") : $"('%' || ({args0Value})::varchar)")}";
+                        if (exp.Method.Name == "StartsWith") return $"({left}) {likeOpt} {(args0Value.EndsWith("'") ? args0Value.Insert(args0Value.Length - 1, "%") : $"(({args0Value})::text || '%')")}";
+                        if (exp.Method.Name == "EndsWith") return $"({left}) {likeOpt} {(args0Value.StartsWith("'") ? args0Value.Insert(1, "%") : $"('%' || ({args0Value})::text)")}";
                         if (args0Value.StartsWith("'") && args0Value.EndsWith("'")) return $"({left}) {likeOpt} {args0Value.Insert(1, "%").Insert(args0Value.Length, "%")}";
-                        return $"({left}) {likeOpt} ('%' || ({args0Value})::varchar || '%')";
+                        return $"({left}) {likeOpt} ('%' || ({args0Value})::text || '%')";
                     case "ToLower": return $"lower({left})";
                     case "ToUpper": return $"upper({left})";
                     case "Substring":
@@ -378,7 +415,7 @@ namespace FreeSql.Odbc.KingbaseES
                         return left;
                     case "Replace": return $"replace({left}, {getExp(exp.Arguments[0])}, {getExp(exp.Arguments[1])})";
                     case "CompareTo": return $"case when {left} = {getExp(exp.Arguments[0])} then 0 when {left} > {getExp(exp.Arguments[0])} then 1 else -1 end";
-                    case "Equals": return $"({left} = ({getExp(exp.Arguments[0])})::varchar)";
+                    case "Equals": return $"({left} = ({getExp(exp.Arguments[0])})::text)";
                 }
             }
             return null;
@@ -573,7 +610,7 @@ namespace FreeSql.Odbc.KingbaseES
                     case "ToInt64": return $"({getExp(exp.Arguments[0])})::int8";
                     case "ToSByte": return $"({getExp(exp.Arguments[0])})::int2";
                     case "ToSingle": return $"({getExp(exp.Arguments[0])})::float4";
-                    case "ToString": return $"({getExp(exp.Arguments[0])})::varchar";
+                    case "ToString": return $"({getExp(exp.Arguments[0])})::text";
                     case "ToUInt16": return $"({getExp(exp.Arguments[0])})::int2";
                     case "ToUInt32": return $"({getExp(exp.Arguments[0])})::int4";
                     case "ToUInt64": return $"({getExp(exp.Arguments[0])})::int8";
